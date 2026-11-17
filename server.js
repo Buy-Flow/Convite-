@@ -1,0 +1,15 @@
+import express from 'express';
+import Database from 'better-sqlite3';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
+import path from 'node:path';
+import fs from 'node:fs';
+const app=express(); app.use(helmet({contentSecurityPolicy:false}));app.use(express.json({limit:'12kb'}));
+const dir=process.env.DATA_DIR||'./data';fs.mkdirSync(dir,{recursive:true});const db=new Database(path.join(dir,'confirmacoes.db'));db.pragma('journal_mode = WAL');
+db.exec('CREATE TABLE IF NOT EXISTS confirmations(id TEXT PRIMARY KEY,name TEXT NOT NULL,phone TEXT NOT NULL,city TEXT NOT NULL,guests INTEGER NOT NULL,created_at TEXT NOT NULL)');
+const limiter=rateLimit({windowMs:15*60*1000,limit:12,standardHeaders:'draft-7',legacyHeaders:false});
+app.post('/api/confirm',limiter,(req,res)=>{const {name,phone,city,guests}=req.body||{};const n=String(name||'').trim(),p=String(phone||'').replace(/\D/g,''),c=String(city||'').trim(),g=Number(guests);if(n.length<3||n.length>120||p.length<10||p.length>13||c.length<2||c.length>100||!Number.isInteger(g)||g<0||g>20)return res.status(400).json({error:'Confira os dados preenchidos.'});db.prepare('INSERT INTO confirmations VALUES(?,?,?,?,?,?)').run(randomUUID(),n,p,c,g,new Date().toISOString());res.json({ok:true});});
+const auth=(req,res,next)=>{const expected=process.env.ADMIN_PASSWORD||'';const supplied=(req.headers.authorization||'').replace(/^Bearer /,'');if(!expected||Buffer.byteLength(expected)!==Buffer.byteLength(supplied)||!timingSafeEqual(Buffer.from(expected),Buffer.from(supplied)))return res.status(401).json({error:'Acesso não autorizado'});next()};
+app.get('/api/admin/confirmations',limiter,auth,(req,res)=>res.json(db.prepare('SELECT name,phone,city,guests,created_at FROM confirmations ORDER BY created_at DESC').all()));
+app.use(express.static('public'));app.listen(process.env.PORT||3000,'0.0.0.0',()=>console.log('Convite pronto'));
